@@ -10,5 +10,5 @@ android {
 }
 
 dependencies {
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+    api("io.michaelrocks:paranoid-core:0.3.5")
 }
