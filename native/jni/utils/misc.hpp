@@ -12,6 +12,9 @@
 clazz(const clazz &) = delete; \
 clazz(clazz &&) = delete;
 
+#define to_app_id(uid)  (uid % 100000)
+#define to_user_id(uid) (uid / 100000)
+
 class mutex_guard {
     DISALLOW_COPY_AND_MOVE(mutex_guard)
 public:
@@ -76,9 +79,7 @@ public:
     bool operator!=(const stateless_allocator&) { return false; }
 };
 
-int parse_int(const char *s);
-static inline int parse_int(const std::string &s) { return parse_int(s.data()); }
-static inline int parse_int(std::string_view s) { return parse_int(s.data()); }
+int parse_int(std::string_view s);
 
 using thread_entry = void *(*)(void *);
 int new_daemon_thread(thread_entry entry, void *arg = nullptr);

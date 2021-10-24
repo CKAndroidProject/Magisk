@@ -8,14 +8,14 @@
 #include <utils.hpp>
 #include <daemon.hpp>
 #include <magisk.hpp>
+#include <db.hpp>
 
-#include "inject.hpp"
-#include "../magiskhide/magiskhide.hpp"
+#include "zygisk.hpp"
+#include "deny/deny.hpp"
 
 using namespace std;
 
 static void *self_handle = nullptr;
-static atomic<int> active_threads = -1;
 
 static int zygisk_log(int prio, const char *fmt, va_list ap);
 
@@ -29,111 +29,119 @@ static void zygisk_logging() {
 }
 
 void self_unload() {
-    LOGD("zygisk: Request to self unload\n");
-    // If deny failed, do not unload or else it will cause SIGSEGV
+    ZLOGD("Request to self unload\n");
+    // If unhooking failed, do not unload or else it will cause SIGSEGV
     if (!unhook_functions())
         return;
     new_daemon_thread(reinterpret_cast<thread_entry>(&dlclose), self_handle);
-    active_threads--;
 }
 
-static void *unload_first_stage(void *v) {
-    // Setup 1ms
-    timespec ts = { .tv_sec = 0, .tv_nsec = 1000000L };
-
-    while (getenv(INJECT_ENV_1))
-        nanosleep(&ts, nullptr);
-
-    // Wait another 1ms to make sure all threads left our code
-    nanosleep(&ts, nullptr);
-
-    char *path = static_cast<char *>(v);
+static void unload_first_stage(int, siginfo_t *info, void *) {
+    auto path = static_cast<char *>(info->si_value.sival_ptr);
     unmap_all(path);
-    active_threads--;
-    return nullptr;
+    free(path);
+    struct sigaction action{};
+    action.sa_handler = SIG_DFL;
+    sigaction(SIGUSR1, &action, nullptr);
 }
 
-// Make sure /proc/self/environ does not reveal our secrets
-// Copy all env to a contiguous memory and set the memory region as MM_ENV
+// Make sure /proc/self/environ is sanitized
+// Filter env and reset MM_ENV_END
 static void sanitize_environ() {
-    static string env;
+    char *cur = environ[0];
 
     for (int i = 0; environ[i]; ++i) {
-        if (str_starts(environ[i], INJECT_ENV_1 "="))
-            continue;
-        env += environ[i];
-        env += '\0';
+        // Copy all env onto the original stack
+        int len = strlen(environ[i]);
+        memmove(cur, environ[i], len + 1);
+        environ[i] = cur;
+        cur += len + 1;
     }
 
-    for (int i = 0; i < 2; ++i) {
-        bool success = true;
-        success &= (0 <= prctl(PR_SET_MM, PR_SET_MM_ENV_START, env.data(), 0, 0));
-        success &= (0 <= prctl(PR_SET_MM, PR_SET_MM_ENV_END, env.data() + env.size(), 0, 0));
-        if (success)
-            break;
-    }
+    prctl(PR_SET_MM, PR_SET_MM_ENV_END, cur, 0, 0);
 }
 
 __attribute__((destructor))
-static void inject_cleanup_wait() {
-    if (active_threads < 0)
-        return;
-
-    // Setup 1ms
-    timespec ts = { .tv_sec = 0, .tv_nsec = 1000000L };
-
-    // Check flag in busy loop
-    while (active_threads)
+static void zygisk_cleanup_wait() {
+    if (self_handle) {
+        // Wait 10us to make sure none of our code is executing
+        timespec ts = { .tv_sec = 0, .tv_nsec = 10000L };
         nanosleep(&ts, nullptr);
+    }
+}
 
-    // Wait another 1ms to make sure all threads left our code
-    nanosleep(&ts, nullptr);
+#define SECOND_STAGE_PTR "ZYGISK_PTR"
+
+static void second_stage_entry(void *handle, char *path) {
+    self_handle = handle;
+    unsetenv(INJECT_ENV_2);
+    unsetenv(SECOND_STAGE_PTR);
+
+    zygisk_logging();
+    ZLOGD("inject 2nd stage\n");
+    hook_functions();
+
+    // Register signal handler to unload 1st stage
+    struct sigaction action{};
+    action.sa_sigaction = unload_first_stage;
+    sigaction(SIGUSR1, &action, nullptr);
+
+    // Schedule to unload 1st stage 10us later
+    timer_t timer;
+    sigevent_t event{};
+    event.sigev_notify = SIGEV_SIGNAL;
+    event.sigev_signo = SIGUSR1;
+    event.sigev_value.sival_ptr = path;
+    timer_create(CLOCK_MONOTONIC, &event, &timer);
+    itimerspec time{};
+    time.it_value.tv_nsec = 10000L;
+    timer_settime(&timer, 0, &time, nullptr);
+}
+
+static void first_stage_entry() {
+    android_logging();
+    ZLOGD("inject 1st stage\n");
+
+    char *ld = getenv("LD_PRELOAD");
+    char *path;
+    if (char *c = strrchr(ld, ':')) {
+        *c = '\0';
+        setenv("LD_PRELOAD", ld, 1);  // Restore original LD_PRELOAD
+        path = strdup(c + 1);
+    } else {
+        unsetenv("LD_PRELOAD");
+        path = strdup(ld);
+    }
+    unsetenv(INJECT_ENV_1);
+    sanitize_environ();
+
+    // Update path to 2nd stage lib
+    *(strrchr(path, '.') - 1) = '2';
+
+    // Load second stage
+    setenv(INJECT_ENV_2, "1", 1);
+    void *handle = dlopen(path, RTLD_LAZY);
+    remap_all(path);
+
+    // Revert path to 1st stage lib
+    *(strrchr(path, '.') - 1) = '1';
+
+    // Run second stage entry
+    char *env = getenv(SECOND_STAGE_PTR);
+    decltype(&second_stage_entry) second_stage;
+    sscanf(env, "%p", &second_stage);
+    second_stage(handle, path);
 }
 
 __attribute__((constructor))
-static void inject_init() {
-    if (char *env = getenv(INJECT_ENV_2)) {
-        zygisk_logging();
-        LOGD("zygisk: inject 2nd stage\n");
-        active_threads = 1;
-        unsetenv(INJECT_ENV_2);
-
-        // Get our own handle
-        self_handle = dlopen(env, RTLD_LAZY);
-        dlclose(self_handle);
-
-        hook_functions();
-
-        // Update path to 1st stage lib
-        *(strrchr(env, '.') - 1) = '1';
-
-        // Some cleanup
-        sanitize_environ();
-        active_threads++;
-        new_daemon_thread(&unload_first_stage, env);
+static void zygisk_init() {
+    if (getenv(INJECT_ENV_2)) {
+        // Return function pointer to first stage
+        char buf[128];
+        snprintf(buf, sizeof(buf), "%p", &second_stage_entry);
+        setenv(SECOND_STAGE_PTR, buf, 1);
     } else if (getenv(INJECT_ENV_1)) {
-        android_logging();
-        LOGD("zygisk: inject 1st stage\n");
-
-        char *ld = getenv("LD_PRELOAD");
-        char *path;
-        if (char *c = strrchr(ld, ':')) {
-            *c = '\0';
-            setenv("LD_PRELOAD", ld, 1);  // Restore original LD_PRELOAD
-            path = c + 1;
-        } else {
-            unsetenv("LD_PRELOAD");
-            path = ld;
-        }
-
-        // Update path to 2nd stage lib
-        *(strrchr(path, '.') - 1) = '2';
-
-        // Setup second stage
-        setenv(INJECT_ENV_2, path, 1);
-        dlopen(path, RTLD_LAZY);
-
-        unsetenv(INJECT_ENV_1);
+        first_stage_entry();
     }
 }
 
@@ -205,21 +213,21 @@ static int zygisk_log(int prio, const char *fmt, va_list ap) {
     return ret;
 }
 
-bool remote_check_denylist(int uid, const char *process) {
+std::vector<int> remote_get_info(int uid, const char *process, AppInfo *info) {
+    vector<int> fds;
     if (int fd = connect_daemon(); fd >= 0) {
         write_int(fd, ZYGISK_REQUEST);
-        write_int(fd, ZYGISK_CHECK_DENYLIST);
+        write_int(fd, ZYGISK_GET_INFO);
 
-        int ret = -1;
-        if (read_int(fd) == 0) {
-            write_int(fd, uid);
-            write_string(fd, process);
-            ret = read_int(fd);
+        write_int(fd, uid);
+        write_string(fd, process);
+        xxread(fd, info, sizeof(*info));
+        if (!info->on_denylist) {
+            fds = recv_fds(fd);
         }
         close(fd);
-        return ret >= 0 && ret;
     }
-    return false;
+    return fds;
 }
 
 int remote_request_unmount() {
@@ -235,42 +243,87 @@ int remote_request_unmount() {
 
 // The following code runs in magiskd
 
-static void setup_files(int client, ucred *cred) {
+static bool get_exe(int pid, char *buf, size_t sz) {
+    snprintf(buf, sz, "/proc/%d/exe", pid);
+    return xreadlink(buf, buf, sz) > 0;
+}
+
+static void setup_files(int client, const sock_cred *cred) {
     LOGD("zygisk: setup files for pid=[%d]\n", cred->pid);
 
     char buf[256];
-    snprintf(buf, sizeof(buf), "/proc/%d/exe", cred->pid);
-    if (xreadlink(buf, buf, sizeof(buf)) < 0) {
+    if (!get_exe(cred->pid, buf, sizeof(buf))) {
         write_int(client, 1);
         return;
     }
 
     write_int(client, 0);
 
-    string path = MAGISKTMP + "/zygisk." + basename(buf);
+    string path = MAGISKTMP + "/" ZYGISKBIN "/zygisk." + basename(buf);
     cp_afc(buf, (path + ".1.so").data());
     cp_afc(buf, (path + ".2.so").data());
 
     write_string(client, path);
 }
 
-static void check_denylist(int client) {
-    if (!hide_enabled()) {
-        write_int(client, HIDE_NOT_ENABLED);
-        return;
-    }
-    write_int(client, 0);
+int cached_manager_app_id = -1;
+static time_t last_modified = 0;
+
+static void get_process_info(int client, const sock_cred *cred) {
+    AppInfo info{};
     int uid = read_int(client);
     string process = read_string(client);
-    write_int(client, is_hide_target(uid, process));
+
+    // This function is called on every single zygote process specialization,
+    // so performance is critical. get_manager_app_id() is expensive as it goes
+    // through a SQLite query and potentially multiple filesystem stats, so we
+    // really want to cache the app ID value. Check the last modify timestamp of
+    // packages.xml and only re-fetch the manager app ID if something changed since
+    // we last checked. Granularity in seconds is good enough.
+    // If denylist is enabled, inotify will invalidate the app ID cache for us.
+    // In this case, we can skip the timestamp check all together.
+
+    if (uid != 1000) {
+        int manager_app_id = cached_manager_app_id;
+
+        // Denylist not enabled, check packages.xml timestamp
+        if (!denylist_enabled && manager_app_id > 0) {
+            struct stat st{};
+            stat("/data/system/packages.xml", &st);
+            if (st.st_atim.tv_sec > last_modified) {
+                manager_app_id = -1;
+                last_modified = st.st_atim.tv_sec;
+            }
+        }
+
+        if (manager_app_id < 0) {
+            manager_app_id = get_manager_app_id();
+            cached_manager_app_id = manager_app_id;
+        }
+
+        if (to_app_id(uid) == manager_app_id) {
+            info.is_magisk_app = true;
+        } else if (denylist_enabled) {
+            info.on_denylist = is_deny_target(uid, process);
+        }
+    }
+
+    xwrite(client, &info, sizeof(info));
+
+    if (!info.on_denylist) {
+        char buf[256];
+        get_exe(cred->pid, buf, sizeof(buf));
+        vector<int> fds = zygisk_module_fds(str_ends(buf, "64"));
+        send_fds(client, fds.data(), fds.size());
+    }
 }
 
-static void do_unmount(int client, ucred *cred) {
-    LOGD("zygisk: cleanup mount namespace for pid=[%d]\n", cred->pid);
-    if (hide_enabled()) {
-        hide_daemon(cred->pid, client);
+static void do_unmount(int client, const sock_cred *cred) {
+    if (denylist_enabled) {
+        LOGD("zygisk: cleanup mount namespace for pid=[%d]\n", cred->pid);
+        revert_daemon(cred->pid, client);
     } else {
-        write_int(client, HIDE_NOT_ENABLED);
+        write_int(client, DENY_NOT_ENFORCED);
     }
 }
 
@@ -284,20 +337,25 @@ static void send_log_pipe(int fd) {
     }
 }
 
-void zygisk_handler(int client, ucred *cred) {
+void zygisk_handler(int client, const sock_cred *cred) {
     int code = read_int(client);
+    char buf[256];
     switch (code) {
     case ZYGISK_SETUP:
         setup_files(client, cred);
         break;
-    case ZYGISK_CHECK_DENYLIST:
-        check_denylist(client);
+    case ZYGISK_GET_INFO:
+        get_process_info(client, cred);
         break;
     case ZYGISK_UNMOUNT:
         do_unmount(client, cred);
         break;
     case ZYGISK_GET_LOG_PIPE:
         send_log_pipe(client);
+        break;
+    case ZYGISK_CONNECT_COMPANION:
+        get_exe(cred->pid, buf, sizeof(buf));
+        connect_companion(client, str_ends(buf, "64"));
         break;
     }
     close(client);

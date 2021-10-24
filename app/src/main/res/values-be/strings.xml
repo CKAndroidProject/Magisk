@@ -121,8 +121,6 @@
     <string name="settings_dark_mode_dark">Заўсёды цёмны</string>
     <string name="settings_download_path_title">Каталог спамповак</string>
     <string name="settings_download_path_message">Файлы будуць спампоўвацца ў %1$s</string>
-    <string name="settings_clear_cache_title">Ачыстка кэшу рэпазіторыя</string>
-    <string name="settings_clear_cache_summary">Ачысціць кэш сеціўных рэпазіторыяў. Гэта прымусіць абнавіць кэш</string>
     <string name="settings_hide_app_title">Схаваць праграму Magisk</string>
     <string name="settings_hide_app_summary">Усталяваць проксі-праграму з выпадковым ідэнтыфікатарам пакунка і адвольным значком</string>
     <string name="settings_restore_app_title">Аднавіць праграму Magisk</string>
@@ -136,7 +134,6 @@
     <string name="settings_update_beta">Бэта</string>
     <string name="settings_update_custom">Адвольны канал</string>
     <string name="settings_update_custom_msg">Устаўце URL</string>
-    <string name="settings_magiskhide_summary">Хаваць Magisk ад выяўлення</string>
     <string name="settings_hosts_title">Пазасістэмны файл hosts</string>
     <string name="settings_hosts_summary">Падтрымка пазасістэмнага файла hosts для праграм, якія блакуюць рэкламу</string>
     <string name="settings_hosts_toast">Дададзены модуль пазасістэмнага файла hosts</string>
@@ -166,8 +163,6 @@
     <string name="no_biometric">Не падтрымліваецца прыладай альбо не ўключана ў наладах</string>
     <string name="settings_customization">Персаналізацыя</string>
     <string name="setting_add_shortcut_summary">Дадаць на хатні экран прыгожы цэтлік на той выпадак, калі пасля хавання праграмы будзе цяжка разглядзець значок і назву</string>
-    <string name="settings_doh_title">DNS паверх HTTPS</string>
-    <string name="settings_doh_description">Абыходны шлях для DNS у некаторых краінах</string>
     <string name="multiuser_mode">Шматкарыстальніцкі рэжым</string>
     <string name="settings_owner_only">Толькі ўладальнік</string>
     <string name="settings_owner_manage">Кіраванне ўладальнікам</string>

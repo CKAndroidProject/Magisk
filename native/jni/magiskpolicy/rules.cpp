@@ -54,6 +54,14 @@ void sepolicy::magisk_rules() {
         allow(SEPOL_CLIENT_DOMAIN, SEPOL_EXEC_TYPE, "file", ALL);
         allow(SEPOL_CLIENT_DOMAIN, SEPOL_CLIENT_DOMAIN, ALL, ALL);
 
+        const char *pts[]{"devpts", "untrusted_app_devpts", "untrusted_app_25_devpts"};
+        for (auto type : pts) {
+            allow(SEPOL_CLIENT_DOMAIN, type, "chr_file", "getattr");
+            allow(SEPOL_CLIENT_DOMAIN, type, "chr_file", "read");
+            allow(SEPOL_CLIENT_DOMAIN, type, "chr_file", "write");
+            allow(SEPOL_CLIENT_DOMAIN, type, "chr_file", "ioctl");
+        }
+
         // Allow these processes to access MagiskSU
         vector<const char *> clients{ "init", "shell", "update_engine", "appdomain" };
         for (auto type : clients) {
@@ -164,6 +172,13 @@ void sepolicy::magisk_rules() {
 
     // For changing file context
     allow("rootfs", "tmpfs", "filesystem", "associate");
+
+    // Allow Zygisk to prctl PR_SET_MM
+    allow("zygote", "zygote", "capability", "sys_resource");
+
+    // Allow hook
+    allow("zygote", "zygote", "process", "execmem");
+    allow("system_server", "system_server", "process", "execmem");
 
     // Allow update_engine/addon.d-v2 to run permissive on all ROMs
     permissive("update_engine");

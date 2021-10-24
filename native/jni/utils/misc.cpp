@@ -27,7 +27,7 @@ int fork_no_orphan() {
     int pid = xfork();
     if (pid)
         return pid;
-    prctl(PR_SET_PDEATHSIG, SIGTERM);
+    prctl(PR_SET_PDEATHSIG, SIGKILL);
     if (getppid() == 1)
         exit(1);
     return 0;
@@ -138,10 +138,10 @@ void set_nice_name(const char *name) {
  * Bionic's atoi runs through strtol().
  * Use our own implementation for faster conversion.
  */
-int parse_int(const char *s) {
+int parse_int(string_view s) {
     int val = 0;
-    char c;
-    while ((c = *(s++))) {
+    for (char c : s) {
+        if (!c) break;
         if (c > '9' || c < '0')
             return -1;
         val = val * 10 + c - '0';

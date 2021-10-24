@@ -8,7 +8,7 @@ ifdef B_MAGISK
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := magisk
-LOCAL_STATIC_LIBRARIES := libnanopb libsystemproperties libutils libphmap libxhook
+LOCAL_STATIC_LIBRARIES := libnanopb libsystemproperties libutils-shared libphmap libxhook
 
 LOCAL_SRC_FILES := \
     core/applets.cpp \
@@ -22,9 +22,6 @@ LOCAL_SRC_FILES := \
     core/module.cpp \
     core/logging.cpp \
     core/thread.cpp \
-    magiskhide/magiskhide.cpp \
-    magiskhide/hide_utils.cpp \
-    magiskhide/hide_policy.cpp \
     resetprop/persist_properties.cpp \
     resetprop/resetprop.cpp \
     su/su.cpp \
@@ -34,7 +31,11 @@ LOCAL_SRC_FILES := \
     zygisk/entry.cpp \
     zygisk/utils.cpp \
     zygisk/hook.cpp \
-    zygisk/memory.cpp
+    zygisk/memory.cpp \
+    zygisk/companion.cpp \
+    zygisk/deny/cli.cpp \
+    zygisk/deny/utils.cpp \
+    zygisk/deny/revert.cpp
 
 LOCAL_LDLIBS := -llog
 
@@ -133,7 +134,7 @@ ifneq (,$(wildcard jni/test.cpp))
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := test
-LOCAL_STATIC_LIBRARIES := libutils libphmap
+LOCAL_STATIC_LIBRARIES := libutils-shared libphmap
 LOCAL_SRC_FILES := test.cpp
 include $(BUILD_EXECUTABLE)
 
