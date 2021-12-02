@@ -137,7 +137,7 @@ fun genStubManifest(srcDir: File, outDir: File): String {
     ))
 
     cmpList.add(Component(
-        "com.topjohnwu.magisk.core.SplashActivity",
+        "com.topjohnwu.magisk.ui.MainActivity",
         "DownloadActivity",
         """
         |<activity
@@ -148,12 +148,6 @@ fun genStubManifest(srcDir: File, outDir: File): String {
         |        <category android:name="android.intent.category.LAUNCHER" />
         |    </intent-filter>
         |</activity>""".ind(2)
-    ))
-
-    cmpList.add(Component(
-        "com.topjohnwu.magisk.ui.MainActivity",
-        "",
-        """|<activity android:name="%s" />""".ind(2)
     ))
 
     cmpList.add(Component(
@@ -176,18 +170,19 @@ fun genStubManifest(srcDir: File, outDir: File): String {
     cmpList.add(Component(
         "com.topjohnwu.magisk.core.download.DownloadService",
         "",
-        """|<service android:name="%s" />""".ind(2)
+        """
+        |<service
+        |    android:name="%s"
+        |    android:exported="false" />""".trimIndent().ind(2)
     ))
 
     cmpList.add(Component(
-        "androidx.work.impl.background.systemjob.SystemJobService",
+        "com.topjohnwu.magisk.core.JobService",
         "",
         """
         |<service
         |    android:name="%s"
-        |    android:directBootAware="false"
-        |    android:enabled="true"
-        |    android:exported="true"
+        |    android:exported="false"
         |    android:permission="android.permission.BIND_JOB_SERVICE" />""".ind(2)
     ))
 
